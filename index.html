@@ -880,6 +880,19 @@ function renderProjection(){
     <div class="stat"><div class="label">Gasto diario estimado</div><div class="value">${fmtMoney(totalLiving)}</div><div class="delta flat">~${fmtMoney(perDay)}/día</div></div>
     <div class="stat balance"><div class="label">Balance proyectado</div><div class="value ${projEnd>=0?'pos':'neg'}">${fmtMoney(projEnd)}</div></div></div>`;
   html+=`<div class="sync-status ${firstFree>=0?'ok':'warn'}">Tras tus gastos iniciales, del primer ingreso te quedan <b>${fmtMoney(firstFree)}</b> para gustos y gastos diarios hasta el siguiente ingreso.</div>`;
+  // Presupuesto diario disponible (manteniendo TODOS los fijos, incluido el ahorro)
+  const dispDaily = days>0 ? (totalInc-totalFixed)/days : 0;
+  const gap = perDay - dispDaily;
+  const partyMonthly = parseNum(b.partyAmount)*parseNum(b.partiesPerWeek)*(days/7);
+  const partnerDaysMonth = parseNum(b.daysPerWeek)*(days/7);
+  const perOuting = partnerDaysMonth>0 ? (totalInc-totalFixed-partyMonthly)/partnerDaysMonth : 0;
+  html+=`<div class="sync-status ${gap>0?'warn':'ok'}" style="line-height:1.6">
+    🎯 <b>Tu tope diario para gastar es ${fmtMoney(dispDaily)}/día</b> (esto ya deja a salvo TODOS tus fijos, incluido tu ahorro de 500 Bs).<br>
+    Ahora proyectas gastar <b>${fmtMoney(perDay)}/día</b>. ${gap>0
+      ? `Te estás pasando por <b>${fmtMoney(gap)}/día</b> (≈ ${fmtMoney(gap*days)} al mes). Recorta esa diferencia para no comerte el ahorro.`
+      : `Vas bien: te sobran <b>${fmtMoney(-gap)}/día</b> (≈ ${fmtMoney(-gap*days)} al mes) que puedes sumar al ahorro.`}<br>
+    Si mantienes tus fiestas (~${fmtMoney(partyMonthly)}/mes), eso equivale a poder gastar <b>~${fmtMoney(perOuting)} por salida</b> con tu pareja.
+  </div>`;
   html+='<div style="overflow-x:auto"><table class="trend-tbl"><thead><tr><th>Tramo</th><th>Ingreso</th><th>Gastos fijos</th><th>Gasto diario est.</th><th>Saldo del tramo</th><th>Saldo acumulado</th></tr></thead><tbody>';
   tramos.forEach(t=>{ html+=`<tr><td>Día ${t.start}–${t.end} <span style="color:var(--text-muted)">(${t.nd}d)</span></td><td>${fmtMoney(t.inc)}</td><td>${fmtMoney(t.fixed)}</td><td>${fmtMoney(t.living)}</td><td style="color:${t.net>=0?'var(--success)':'var(--danger)'}">${fmtMoney(t.net)}</td><td style="color:${t.acc>=0?'var(--success)':'var(--danger)'};font-weight:700">${fmtMoney(t.acc)}</td></tr>`; });
   html+='</tbody></table></div>';
