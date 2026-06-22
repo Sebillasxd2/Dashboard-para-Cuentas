@@ -167,7 +167,8 @@
   table.trend-tbl { border-collapse:collapse; width:100%; margin-top:16px; font-size:12.5px; }
   table.trend-tbl th, table.trend-tbl td { border:1px solid var(--border); padding:8px 10px; text-align:right; }
   table.trend-tbl th:first-child, table.trend-tbl td:first-child { text-align:left; text-transform:capitalize; }
-  table.trend-tbl th { background: var(--surface-2); font-weight:700; }
+  table.trend-tbl th { background: var(--surface-2); font-weight:700; position:sticky; top:0; }
+  tr.today-row td { background: var(--primary-weak) !important; }
 
   /* Registro rápido */
   .qa-wrap { max-width: 540px; margin: 0 auto; }
@@ -252,6 +253,7 @@
           <button class="ingreso" data-t="ingreso">➕ Ingreso</button>
         </div>
         <input class="qa-amount" id="qaAmount" inputmode="decimal" placeholder="0" />
+        <div id="qaTodayHint" style="text-align:center;margin:10px 0 0;font-weight:700;color:var(--primary-strong)"></div>
         <div class="field" style="margin-top:14px;">
           <label id="qaConceptLabel">Concepto (en qué gastaste)</label>
           <input class="input" id="qaConcept" placeholder="Ej: Almuerzo, taxi, mercado..." />
@@ -260,6 +262,7 @@
           <label>Categoría</label>
           <div class="chips" id="qaChips"></div>
         </div>
+        <div class="field"><label>Fecha</label><input class="input" id="qaDate" type="date" /></div>
         <button class="btn primary block" id="qaSave" style="padding:14px; font-size:15px;">Guardar</button>
       </div>
 
@@ -267,6 +270,11 @@
         <div class="stat income"><div class="label">Ingresos</div><div class="value" id="qaInc">$ 0</div></div>
         <div class="stat expense"><div class="label">Gastos</div><div class="value" id="qaExp">$ 0</div></div>
         <div class="stat balance"><div class="label">Balance</div><div class="value" id="qaBal">$ 0</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">📅 Presupuesto día a día <span class="sub">se ajusta según lo que gastas</span></div>
+        <div id="dailyBudgetBox"></div>
       </div>
 
       <div class="card">
@@ -553,6 +561,8 @@ const PALETTE = ['transparent','#6366f1','#10b981','#ef4444','#f59e0b','#3b82f6'
 const EVENT_CATS = { 'Universidad':'#6366f1','Examen':'#ef4444','Entrega':'#f59e0b','Rutina':'#10b981','Personal':'#3b82f6','Otro':'#8b5cf6' };
 const EXPENSE_CATS = ['Familia','Pareja','Fiestas','Alimentación','Mascota','Gimnasio','Apuestas','Trading','Videojuegos','Regalos','Ahorro','Otros'];
 const CAT_COLORS = ['#6366f1','#ec4899','#f59e0b','#10b981','#14b8a6','#3b82f6','#ef4444','#8b5cf6','#0ea5e9','#f43f5e','#22c55e','#94a3b8'];
+// Categorías "fijas/comprometidas" (salen de la bolsa una vez); el resto son gasto diario/discrecional
+const FIXED_CATS = ['Familia','Mascota','Gimnasio','Apuestas','Trading','Videojuegos','Ahorro','Regalos'];
 
 /* ===== INIT ===== */
 function init(){
@@ -703,14 +713,16 @@ function renderQuickAdd(){
   const wrap=$('#qaRecent');
   if(!movs.length){ wrap.innerHTML='<div class="empty">Aún no hay movimientos este mes.</div>'; return; }
   wrap.innerHTML=movs.slice().reverse().slice(0,12).map(m=>`<div class="qa-recent"><span style="font-size:16px">${m.t==='gasto'?'➖':'➕'}</span><div style="flex:1"><div style="font-weight:600">${escapeHtml(m.label)}</div><div style="font-size:11px;color:var(--text-muted)">${escapeHtml(m.sub)}${m.date?' · '+m.date.split('-').reverse().slice(0,2).join('/'):''}</div></div><span class="qa-amt ${m.t==='gasto'?'exp':'inc'}">${m.t==='gasto'?'-':'+'}${fmtMoney(m.amount)}</span></div>`).join('');
+  const dt=$('#qaDate'); if(dt && !dt.value){ const d=new Date(); dt.value=dateKey(d.getFullYear(),d.getMonth(),d.getDate()); }
+  updateQaToday();
 }
 $('#qaType').addEventListener('click', e=>{ const b=e.target.closest('[data-t]'); if(!b) return; qaType=b.dataset.t; $$('#qaType button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); renderQuickAdd(); });
 $('#qaChips').addEventListener('click', e=>{ const b=e.target.closest('[data-cat]'); if(!b) return; qaCat=b.dataset.cat; renderQuickChips(); });
 function quickSave(){
   const amt=parseNum($('#qaAmount').value); if(!amt){ toast('Ingresa un monto'); $('#qaAmount').focus(); return; }
-  const concept=$('#qaConcept').value.trim(); const d=new Date(); const today=dateKey(d.getFullYear(),d.getMonth(),d.getDate());
-  if(qaType==='gasto') state.expenses.items.push({id:uid(),date:today,concept:concept||qaCat,category:qaCat,amount:String(amt)});
-  else state.expenses.income.push({id:uid(),source:concept||'Ingreso',amount:String(amt)});
+  const concept=$('#qaConcept').value.trim(); const d=new Date(); const today=dateKey(d.getFullYear(),d.getMonth(),d.getDate()); const useDate=$('#qaDate').value||today;
+  if(qaType==='gasto') state.expenses.items.push({id:uid(),date:useDate,concept:concept||qaCat,category:qaCat,amount:String(amt)});
+  else state.expenses.income.push({id:uid(),source:concept||'Ingreso',amount:String(amt),currency:'Bs',day:String(parseInt(useDate.split('-')[2])||1)});
   save(); $('#qaAmount').value=''; $('#qaConcept').value=''; renderQuickAdd(); renderExpensesAll();
   toast(qaType==='gasto'?'✓ Gasto registrado':'✓ Ingreso registrado');
 }
@@ -761,6 +773,7 @@ function renderExpenseTable(){ const t=$('#expenseTable'); const totalInc=totalI
   const totalExp=sumAmt(state.expenses.items); const totalPct=totalInc>0?totalExp/totalInc*100:0;
   html+=`<tr class="total"><td colspan="3">Total gastos</td><td class="num">${fmtMoney(totalExp)}</td><td class="num">${totalPct.toFixed(1)}%</td><td></td></tr></tbody>`; t.innerHTML=html; }
 function updateExpenseSummary(){
+  refreshDaily();
   const inc=totalIncomeBs(), exp=sumAmt(state.expenses.items), bal=inc-exp;
   $('#statIncome').textContent=fmtMoney(inc); $('#statExpense').textContent=fmtMoney(exp);
   const balEl=$('#statBalance'); balEl.textContent=fmtMoney(bal); balEl.className='value '+(bal>=0?'pos':'neg');
@@ -923,6 +936,30 @@ function loadJulyPlan(){
   state.expenses.items=state.templates.fixedExpenses.map(x=>({id:uid(),date:`2026-07-${pad(parseInt(x.day)||1)}`,concept:x.concept,category:x.category,amount:x.amount}));
   save(); applyTheme(); renderAll(); activateTab('gastos'); toast('✓ Plan de julio cargado');
 }
+
+/* ===== PRESUPUESTO DÍA A DÍA (bolsa de gustos con rebalanceo) ===== */
+function discretionaryPool(){ const fixed=state.expenses.items.filter(i=>FIXED_CATS.includes(i.category)).reduce((s,i)=>s+parseNum(i.amount),0); return totalIncomeBs()-fixed; }
+function dailySpentMap(){ const m={}; state.expenses.items.forEach(i=>{ if(FIXED_CATS.includes(i.category)) return; const d=i.date?Math.max(1,parseInt(i.date.split('-')[2])||1):1; m[d]=(m[d]||0)+parseNum(i.amount); }); return m; }
+function periodDays(period){ const [y,m]=period.split('-').map(Number); return new Date(y,m,0).getDate(); }
+function todayInPeriod(period){ const [y,m]=period.split('-').map(Number); const n=new Date(); return (n.getFullYear()===y && n.getMonth()===m-1)? n.getDate():0; }
+function availableToday(){ const period=state.expenses.period||periodKey(new Date()); const N=periodDays(period); const pool=discretionaryPool(); const base=N>0?pool/N:0; const sp=dailySpentMap(); const td=todayInPeriod(period)||1; let prior=0; for(let d=1; d<td; d++) prior+=(sp[d]||0); return base*td-prior; }
+function updateQaToday(){ const el=$('#qaTodayHint'); if(el) el.textContent='💸 Puedes gastar hoy: '+fmtMoney(availableToday()); }
+function renderDailyBudget(){ const box=$('#dailyBudgetBox'); if(!box) return;
+  const period=state.expenses.period||periodKey(new Date()); const [py,pm]=period.split('-').map(Number); const N=periodDays(period);
+  const pool=discretionaryPool(); const sp=dailySpentMap(); const totalSpent=Object.values(sp).reduce((s,v)=>s+v,0); const td=todayInPeriod(period); const dow=['Do','Lu','Ma','Mi','Ju','Vi','Sá'];
+  const base=N>0?pool/N:0; let spentCum=0, rows='', dispToday=base;
+  for(let d=1; d<=N; d++){ const disp=base*d-spentCum; const spent=sp[d]||0; if(d===(td||1)) dispToday=disp; spentCum+=spent; const saldo=base*d-spentCum; const isT=d===td;
+    rows+=`<tr class="${isT?'today-row':''}"><td>${dow[new Date(py,pm-1,d).getDay()]} ${d}</td><td>${fmtMoney(disp)}</td><td>${spent?fmtMoney(spent):'—'}</td><td style="color:${saldo>=0?'var(--success)':'var(--danger)'};font-weight:700">${fmtMoney(saldo)}</td></tr>`; }
+  const restante=pool-totalSpent;
+  let html=`<div class="stat-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px;">
+    <div class="stat"><div class="label">Bolsa de gustos del mes</div><div class="value">${fmtShort(pool)}</div></div>
+    <div class="stat expense"><div class="label">Gastado día a día</div><div class="value">${fmtShort(totalSpent)}</div></div>
+    <div class="stat balance"><div class="label">Te queda</div><div class="value ${restante>=0?'pos':'neg'}">${fmtShort(restante)}</div></div>
+    <div class="stat income"><div class="label">Puedes gastar hoy</div><div class="value">${fmtShort(dispToday)}</div></div></div>`;
+  html+='<div style="overflow-x:auto;max-height:380px;overflow-y:auto"><table class="trend-tbl"><thead><tr><th>Día</th><th>Puedes gastar</th><th>Gastado</th><th>Banco</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  html+=`<p class="hint" style="margin-top:10px">Cada día sumas tu base (~${fmtShort(base)}/día) más lo que tengas en el "banco". Si gastas menos, el banco crece y al día siguiente puedes gastar más; si te pasas, baja (puede ir en rojo). Bolsa = ingresos − fijos (tu ahorro queda protegido).</p>`;
+  box.innerHTML=html; }
+function refreshDaily(){ renderDailyBudget(); updateQaToday(); }
 
 /* ===== HISTORIAL ===== */
 function renderHistory(){ const list=$('#historyList'); const keys=Object.keys(state.expenses.history).sort().reverse();
