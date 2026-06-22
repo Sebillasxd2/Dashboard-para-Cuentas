@@ -388,6 +388,19 @@
       <div id="trendBox"></div>
     </div>
 
+    <div class="card">
+      <div class="card-h">💡 Presupuesto y proyección del mes <span class="sub">¿alcanza hasta el próximo ingreso?</span></div>
+      <p class="hint" style="margin-top:-8px;">Estima tus gastos del día a día. La proyección divide el mes por tus fechas de ingreso (ej: día 1 y día 15).</p>
+      <div class="row wrap" style="gap:12px; margin-bottom:16px;">
+        <div class="field" style="flex:1; min-width:120px; margin:0;"><label>Gasto diario pareja — mín</label><input class="input" id="bDailyMin" inputmode="decimal"></div>
+        <div class="field" style="flex:1; min-width:120px; margin:0;"><label>— máx</label><input class="input" id="bDailyMax" inputmode="decimal"></div>
+        <div class="field" style="flex:1; min-width:120px; margin:0;"><label>Días/semana con pareja</label><input class="input" id="bDays" inputmode="decimal"></div>
+        <div class="field" style="flex:1; min-width:120px; margin:0;"><label>Fiestas — monto</label><input class="input" id="bParty" inputmode="decimal"></div>
+        <div class="field" style="flex:1; min-width:120px; margin:0;"><label>Fiestas/semana</label><input class="input" id="bPartyN" inputmode="decimal"></div>
+      </div>
+      <div id="projBox"></div>
+    </div>
+
     <div class="grid-2">
       <div class="card">
         <div class="card-h">💵 Ingresos <span class="sub"><button class="btn sm primary" id="addIncome">+ Fila</button></span></div>
@@ -419,6 +432,7 @@
       </div>
       <div class="row wrap" style="margin-top:14px;">
         <button class="btn success" id="applyTemplateBtn">▶️ Iniciar nuevo mes con estos fijos</button>
+        <button class="btn" id="seedJuly">📥 Cargar mi plan de julio</button>
         <span class="hint" style="margin:0; align-self:center;">Archiva el mes actual y arranca uno limpio con tus fijos.</span>
       </div>
     </div>
@@ -448,7 +462,10 @@
     <div class="card-h" style="font-size:14px;">☁️ Sincronización en la nube</div>
     <div id="syncBox"></div>
     <hr style="border:none;border-top:1px solid var(--border);margin:18px 0;" />
-    <div class="field"><label>Símbolo de moneda</label><input class="input" id="cfgCurrency" placeholder="$" /></div>
+    <div class="row">
+      <div class="field" style="flex:1;"><label>Símbolo de moneda</label><input class="input" id="cfgCurrency" placeholder="Bs" /></div>
+      <div class="field" style="flex:1;"><label>Valor del dólar (Bs por 1 USD)</label><input class="input" id="cfgDollar" type="number" step="0.01" placeholder="9.70" /></div>
+    </div>
     <div class="row">
       <div class="field" style="flex:1;"><label>Hora inicio</label><input class="input" id="cfgStart" type="number" min="0" max="23" /></div>
       <div class="field" style="flex:1;"><label>Hora fin</label><input class="input" id="cfgEnd" type="number" min="1" max="24" /></div>
@@ -481,7 +498,8 @@ const DEFAULT_STATE = {
   ideas: [], apuntes: [], events: {},
   schedule: { general:{}, clases:{}, rutina:{} },
   habits: [], uniTasks: [], rutTasks: [],
-  config: { currency:'$', startHour:7, endHour:23, blockSize:2, theme:'light' },
+  config: { currency:'$', startHour:7, endHour:23, blockSize:2, theme:'light', dollarRate:9.70 },
+  budget: { dailyMin:50, dailyMax:200, daysPerWeek:6, partyAmount:250, partiesPerWeek:1 },
   templates: { fixedIncome: [], fixedExpenses: [] },
   expenses: { period:'', income:[], items:[], history:{} }
 };
@@ -527,11 +545,14 @@ function escapeHtml(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,
 function escapeAttr(s){ return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 const sumAmt = arr => arr.reduce((s,i)=>s+parseNum(i.amount),0);
 const firstOfMonthKey = ()=>{ const d=new Date(); return dateKey(d.getFullYear(), d.getMonth(), 1); };
+const incomeBs = r => { const a=parseNum(r.amount); return r.currency==='USD' ? a*(parseNum(state.config.dollarRate)||0) : a; };
+const totalIncomeBs = () => state.expenses.income.reduce((s,r)=>s+incomeBs(r),0);
+const totalFixedIncomeBs = () => state.templates.fixedIncome.reduce((s,r)=>s+incomeBs(r),0);
 
 const PALETTE = ['transparent','#6366f1','#10b981','#ef4444','#f59e0b','#3b82f6','#ec4899','#14b8a6'];
 const EVENT_CATS = { 'Universidad':'#6366f1','Examen':'#ef4444','Entrega':'#f59e0b','Rutina':'#10b981','Personal':'#3b82f6','Otro':'#8b5cf6' };
-const EXPENSE_CATS = ['Alimentación','Transporte','Vivienda','Servicios','Educación','Entretenimiento','Salud','Ahorro','Otros'];
-const CAT_COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#ec4899','#14b8a6','#8b5cf6','#94a3b8'];
+const EXPENSE_CATS = ['Familia','Pareja','Fiestas','Alimentación','Mascota','Gimnasio','Apuestas','Trading','Videojuegos','Regalos','Ahorro','Otros'];
+const CAT_COLORS = ['#6366f1','#ec4899','#f59e0b','#10b981','#14b8a6','#3b82f6','#ef4444','#8b5cf6','#0ea5e9','#f43f5e','#22c55e','#94a3b8'];
 
 /* ===== INIT ===== */
 function init(){
@@ -664,7 +685,7 @@ function bindTaskList(kind){ const inp=$(kind==='uni'?'#uniTaskInput':'#rutTaskI
   list.addEventListener('focusout',e=>{ const tx=e.target.closest('.task-txt'); if(!tx) return; const t=tasksOf(kind).find(x=>x.id===tx.dataset.id); if(t){ t.text=tx.textContent.trim(); save(); } }); }
 
 /* ===== REGISTRO RÁPIDO ===== */
-let qaType='gasto', qaCat='Alimentación';
+let qaType='gasto', qaCat='Pareja';
 function renderQuickChips(){ const wrap=$('#qaChips'); wrap.innerHTML=EXPENSE_CATS.map(c=>`<button class="chip ${c===qaCat?'active':''}" data-cat="${c}">${c}</button>`).join(''); }
 function renderQuickAdd(){
   $('#qaPeriod').textContent=periodLabel(state.expenses.period||periodKey(new Date()));
@@ -672,7 +693,7 @@ function renderQuickAdd(){
   $('#qaCatField').style.display = qaType==='gasto'?'block':'none';
   $('#qaConceptLabel').textContent = qaType==='gasto'?'Concepto (en qué gastaste)':'Fuente del ingreso';
   $('#qaConcept').placeholder = qaType==='gasto'?'Ej: Almuerzo, taxi, mercado...':'Ej: Sueldo, venta, propina...';
-  const inc=sumAmt(state.expenses.income), exp=sumAmt(state.expenses.items);
+  const inc=totalIncomeBs(), exp=sumAmt(state.expenses.items);
   $('#qaInc').textContent=fmtShort(inc); $('#qaExp').textContent=fmtShort(exp);
   const balEl=$('#qaBal'); balEl.textContent=fmtShort(inc-exp); balEl.className='value '+((inc-exp)>=0?'':'');
   // movimientos recientes (gastos + ingresos del mes), mas nuevos primero
@@ -698,14 +719,15 @@ $('#qaAmount').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#qaConcep
 $('#qaConcept').addEventListener('keydown', e=>{ if(e.key==='Enter') quickSave(); });
 
 /* ===== GASTOS: MES, PLANTILLA, ARCHIVO ===== */
-function archiveCurrent(){ const exp=state.expenses; exp.history[exp.period]={ income:structuredClone(exp.income), items:structuredClone(exp.items), totalIncome:sumAmt(exp.income), totalExpense:sumAmt(exp.items) }; }
-function applyTemplate(){ const t=state.templates;
-  if(t.fixedIncome.length) state.expenses.income=t.fixedIncome.map(x=>({id:uid(),source:x.source,amount:x.amount}));
-  state.expenses.items=t.fixedExpenses.map(x=>({id:uid(),date:firstOfMonthKey(),concept:x.concept,category:x.category||'Otros',amount:x.amount}));
+function archiveCurrent(){ const exp=state.expenses; exp.history[exp.period]={ income:structuredClone(exp.income), items:structuredClone(exp.items), totalIncome:totalIncomeBs(), totalExpense:sumAmt(exp.items) }; }
+function dayInPeriod(period, day){ const d=Math.min(Math.max(parseInt(day)||1,1),28); return `${period}-${pad(d)}`; }
+function applyTemplate(){ const t=state.templates; const period=state.expenses.period||periodKey(new Date());
+  if(t.fixedIncome.length) state.expenses.income=t.fixedIncome.map(x=>({id:uid(),source:x.source,amount:x.amount,currency:x.currency||'Bs',day:x.day||''}));
+  state.expenses.items=t.fixedExpenses.map(x=>({id:uid(),date:dayInPeriod(period,x.day),concept:x.concept,category:x.category||'Otros',amount:x.amount}));
 }
 function checkMonthRollover(){
   const now=periodKey(new Date()); const exp=state.expenses;
-  if(exp.period && exp.period!==now){
+  if(exp.period && exp.period < now){
     if(exp.income.length||exp.items.length) archiveCurrent();
     exp.period=now;
     if(state.templates.fixedIncome.length||state.templates.fixedExpenses.length) applyTemplate();
@@ -726,19 +748,20 @@ $('#closeMonthBtn').addEventListener('click', startNewMonthManual);
 $('#applyTemplateBtn').addEventListener('click', startNewMonthManual);
 
 /* ===== GASTOS: RENDER ===== */
-function renderExpensesAll(){ $('#periodLabel').textContent=periodLabel(state.expenses.period||periodKey(new Date())); renderIncomeTable(); renderExpenseTable(); updateExpenseSummary(); renderTemplates(); renderTrends(); renderHistory(); }
+function renderExpensesAll(){ $('#periodLabel').textContent=periodLabel(state.expenses.period||periodKey(new Date())); renderIncomeTable(); renderExpenseTable(); updateExpenseSummary(); renderTemplates(); renderTrends(); renderProjection(); renderHistory(); }
 function renderIncomeTable(){ const t=$('#incomeTable');
-  let html=`<thead><tr><th>Fuente de ingreso</th><th class="num" style="width:150px;">Monto</th><th class="del-cell"></th></tr></thead><tbody>`;
-  state.expenses.income.forEach(r=>{ html+=`<tr><td><input data-id="${r.id}" data-f="source" value="${escapeAttr(r.source)}" placeholder="Ej: Sueldo..."></td><td class="num"><input class="num" data-id="${r.id}" data-f="amount" value="${escapeAttr(r.amount)}" placeholder="0" inputmode="decimal"></td><td class="del-cell"><button class="btn danger sm" data-delinc="${r.id}">✕</button></td></tr>`; });
-  html+=`<tr class="total"><td>Total ingresos</td><td class="num">${fmtMoney(sumAmt(state.expenses.income))}</td><td></td></tr></tbody>`; t.innerHTML=html; }
-function renderExpenseTable(){ const t=$('#expenseTable'); const totalInc=sumAmt(state.expenses.income);
+  let html=`<thead><tr><th>Fuente</th><th style="width:78px;">Moneda</th><th class="num" style="width:90px;">Monto</th><th style="width:56px;">Día</th><th class="num" style="width:120px;">En Bs</th><th class="del-cell"></th></tr></thead><tbody>`;
+  state.expenses.income.forEach(r=>{ const cur=r.currency||'Bs';
+    html+=`<tr><td><input data-id="${r.id}" data-f="source" value="${escapeAttr(r.source)}" placeholder="Ej: Sueldo..."></td><td><select data-id="${r.id}" data-f="currency"><option ${cur==='Bs'?'selected':''}>Bs</option><option ${cur==='USD'?'selected':''}>USD</option></select></td><td class="num"><input class="num" data-id="${r.id}" data-f="amount" value="${escapeAttr(r.amount)}" placeholder="0" inputmode="decimal"></td><td><input class="num" data-id="${r.id}" data-f="day" value="${escapeAttr(r.day||'')}" placeholder="1" inputmode="numeric" style="width:100%"></td><td class="num" data-incbs="${r.id}">${fmtMoney(incomeBs(r))}</td><td class="del-cell"><button class="btn danger sm" data-delinc="${r.id}">✕</button></td></tr>`; });
+  html+=`<tr class="total"><td colspan="4">Total ingresos (Bs)</td><td class="num">${fmtMoney(totalIncomeBs())}</td><td></td></tr></tbody>`; t.innerHTML=html; }
+function renderExpenseTable(){ const t=$('#expenseTable'); const totalInc=totalIncomeBs();
   let html=`<thead><tr><th style="width:120px;">Fecha</th><th>Concepto</th><th style="width:150px;">Categoría</th><th class="num" style="width:140px;">Monto</th><th class="num" style="width:90px;">% ing.</th><th class="del-cell"></th></tr></thead><tbody>`;
   state.expenses.items.forEach(r=>{ const amt=parseNum(r.amount); const pct=totalInc>0?amt/totalInc*100:0; const opts=EXPENSE_CATS.map(c=>`<option ${c===r.category?'selected':''}>${c}</option>`).join('');
     html+=`<tr><td><input type="date" data-id="${r.id}" data-f="date" value="${r.date||''}"></td><td><input data-id="${r.id}" data-f="concept" value="${escapeAttr(r.concept)}" placeholder="¿En qué gastaste?"></td><td><select data-id="${r.id}" data-f="category">${opts}</select></td><td class="num"><input class="num" data-id="${r.id}" data-f="amount" value="${escapeAttr(r.amount)}" placeholder="0" inputmode="decimal"></td><td class="num" data-pct="${r.id}">${pct.toFixed(1)}%</td><td class="del-cell"><button class="btn danger sm" data-delexp="${r.id}">✕</button></td></tr>`; });
   const totalExp=sumAmt(state.expenses.items); const totalPct=totalInc>0?totalExp/totalInc*100:0;
   html+=`<tr class="total"><td colspan="3">Total gastos</td><td class="num">${fmtMoney(totalExp)}</td><td class="num">${totalPct.toFixed(1)}%</td><td></td></tr></tbody>`; t.innerHTML=html; }
 function updateExpenseSummary(){
-  const inc=sumAmt(state.expenses.income), exp=sumAmt(state.expenses.items), bal=inc-exp;
+  const inc=totalIncomeBs(), exp=sumAmt(state.expenses.items), bal=inc-exp;
   $('#statIncome').textContent=fmtMoney(inc); $('#statExpense').textContent=fmtMoney(exp);
   const balEl=$('#statBalance'); balEl.textContent=fmtMoney(bal); balEl.className='value '+(bal>=0?'pos':'neg');
   $('#statPct').textContent=(inc>0?exp/inc*100:0).toFixed(1)+'%';
@@ -766,39 +789,43 @@ function setDelta(sel, current, prev, expenseSemantics){
 function sortedPeriods(){
   const map={}; Object.entries(state.expenses.history).forEach(([k,h])=>map[k]={income:h.totalIncome||0,expense:h.totalExpense||0});
   const cur=state.expenses.period||periodKey(new Date());
-  map[cur]={income:sumAmt(state.expenses.income),expense:sumAmt(state.expenses.items),current:true};
+  map[cur]={income:totalIncomeBs(),expense:sumAmt(state.expenses.items),current:true};
   return Object.keys(map).sort().map(k=>({key:k,...map[k]}));
 }
 function previousPeriodTotals(){ const arr=sortedPeriods(); const idx=arr.findIndex(p=>p.current); if(idx>0) return arr[idx-1]; return null; }
 
 /* edición en vivo ingresos */
-$('#incomeTable').addEventListener('input', e=>{ const inp=e.target.closest('[data-id]'); if(!inp) return; const r=state.expenses.income.find(x=>x.id===inp.dataset.id); if(!r) return; r[inp.dataset.f]=inp.value;
-  if(inp.dataset.f==='amount'){ const tc=$('#incomeTable .total .num'); if(tc) tc.textContent=fmtMoney(sumAmt(state.expenses.income)); updateExpenseSummary(); refreshExpensePcts(); } save(); });
-$('#incomeTable').addEventListener('click', e=>{ const del=e.target.closest('[data-delinc]'); if(!del) return; state.expenses.income=state.expenses.income.filter(r=>r.id!==del.dataset.delinc); save(); renderIncomeTable(); renderExpenseTable(); updateExpenseSummary(); });
-$('#addIncome').addEventListener('click', ()=>{ state.expenses.income.push({id:uid(),source:'',amount:''}); save(); renderIncomeTable(); });
+function updateIncomeDerived(r){ const c=$(`#incomeTable [data-incbs="${r.id}"]`); if(c) c.textContent=fmtMoney(incomeBs(r)); const tc=$('#incomeTable .total .num'); if(tc) tc.textContent=fmtMoney(totalIncomeBs()); updateExpenseSummary(); refreshExpensePcts(); renderProjection(); }
+$('#incomeTable').addEventListener('input', e=>{ const inp=e.target.closest('[data-id]'); if(!inp) return; const r=state.expenses.income.find(x=>x.id===inp.dataset.id); if(!r) return; r[inp.dataset.f]=inp.value; updateIncomeDerived(r); save(); });
+$('#incomeTable').addEventListener('change', e=>{ const sel=e.target.closest('select[data-id]'); if(!sel) return; const r=state.expenses.income.find(x=>x.id===sel.dataset.id); if(!r) return; r[sel.dataset.f]=sel.value; updateIncomeDerived(r); save(); });
+$('#incomeTable').addEventListener('click', e=>{ const del=e.target.closest('[data-delinc]'); if(!del) return; state.expenses.income=state.expenses.income.filter(r=>r.id!==del.dataset.delinc); save(); renderIncomeTable(); renderExpenseTable(); updateExpenseSummary(); renderProjection(); });
+$('#addIncome').addEventListener('click', ()=>{ state.expenses.income.push({id:uid(),source:'',amount:'',currency:'Bs',day:''}); save(); renderIncomeTable(); });
 /* edición en vivo gastos */
 $('#expenseTable').addEventListener('input', e=>{ const inp=e.target.closest('[data-id]'); if(!inp) return; const r=state.expenses.items.find(x=>x.id===inp.dataset.id); if(!r) return; r[inp.dataset.f]=inp.value; if(inp.dataset.f==='amount'){ updateExpenseTotals(); updateExpenseSummary(); } save(); });
 $('#expenseTable').addEventListener('change', e=>{ const sel=e.target.closest('select[data-id]'); if(!sel) return; const r=state.expenses.items.find(x=>x.id===sel.dataset.id); if(r){ r.category=sel.value; save(); updateExpenseSummary(); } });
 $('#expenseTable').addEventListener('click', e=>{ const del=e.target.closest('[data-delexp]'); if(!del) return; state.expenses.items=state.expenses.items.filter(r=>r.id!==del.dataset.delexp); save(); renderExpenseTable(); updateExpenseSummary(); });
 $('#addExpense').addEventListener('click', ()=>{ const d=new Date(); state.expenses.items.push({id:uid(),date:dateKey(d.getFullYear(),d.getMonth(),d.getDate()),concept:'',category:'Alimentación',amount:''}); save(); renderExpenseTable(); });
-function updateExpenseTotals(){ const totalExp=sumAmt(state.expenses.items), totalInc=sumAmt(state.expenses.income); const tr=$('#expenseTable .total'); if(tr){ tr.children[1].textContent=fmtMoney(totalExp); tr.children[2].textContent=(totalInc>0?totalExp/totalInc*100:0).toFixed(1)+'%'; } refreshExpensePcts(); }
-function refreshExpensePcts(){ const totalInc=sumAmt(state.expenses.income); state.expenses.items.forEach(r=>{ const c=$(`#expenseTable [data-pct="${r.id}"]`); if(c) c.textContent=(totalInc>0?parseNum(r.amount)/totalInc*100:0).toFixed(1)+'%'; }); }
+function updateExpenseTotals(){ const totalExp=sumAmt(state.expenses.items), totalInc=totalIncomeBs(); const tr=$('#expenseTable .total'); if(tr){ tr.children[1].textContent=fmtMoney(totalExp); tr.children[2].textContent=(totalInc>0?totalExp/totalInc*100:0).toFixed(1)+'%'; } refreshExpensePcts(); }
+function refreshExpensePcts(){ const totalInc=totalIncomeBs(); state.expenses.items.forEach(r=>{ const c=$(`#expenseTable [data-pct="${r.id}"]`); if(c) c.textContent=(totalInc>0?parseNum(r.amount)/totalInc*100:0).toFixed(1)+'%'; }); }
 
 /* ===== PLANTILLA DE FIJOS ===== */
 function renderTemplates(){
-  const it=$('#fixedIncTable'); let h1=`<thead><tr><th>Fuente</th><th class="num" style="width:120px;">Monto</th><th class="del-cell"></th></tr></thead><tbody>`;
-  state.templates.fixedIncome.forEach(r=>{ h1+=`<tr><td><input data-tid="${r.id}" data-tt="inc" data-f="source" value="${escapeAttr(r.source)}" placeholder="Sueldo..."></td><td class="num"><input class="num" data-tid="${r.id}" data-tt="inc" data-f="amount" value="${escapeAttr(r.amount)}" placeholder="0" inputmode="decimal"></td><td class="del-cell"><button class="btn danger sm" data-deltinc="${r.id}">✕</button></td></tr>`; });
-  h1+=`<tr class="total"><td>Total</td><td class="num">${fmtMoney(sumAmt(state.templates.fixedIncome))}</td><td></td></tr></tbody>`; it.innerHTML=h1;
-  const et=$('#fixedExpTable'); let h2=`<thead><tr><th>Concepto</th><th style="width:130px;">Categoría</th><th class="num" style="width:110px;">Monto</th><th class="del-cell"></th></tr></thead><tbody>`;
+  const it=$('#fixedIncTable'); let h1=`<thead><tr><th>Fuente</th><th style="width:68px;">Moneda</th><th class="num" style="width:80px;">Monto</th><th style="width:50px;">Día</th><th class="del-cell"></th></tr></thead><tbody>`;
+  state.templates.fixedIncome.forEach(r=>{ const cur=r.currency||'Bs';
+    h1+=`<tr><td><input data-tid="${r.id}" data-tt="inc" data-f="source" value="${escapeAttr(r.source)}" placeholder="Sueldo..."></td><td><select data-tid="${r.id}" data-tt="inc" data-f="currency"><option ${cur==='Bs'?'selected':''}>Bs</option><option ${cur==='USD'?'selected':''}>USD</option></select></td><td class="num"><input class="num" data-tid="${r.id}" data-tt="inc" data-f="amount" value="${escapeAttr(r.amount)}" placeholder="0" inputmode="decimal"></td><td><input class="num" data-tid="${r.id}" data-tt="inc" data-f="day" value="${escapeAttr(r.day||'')}" placeholder="1" inputmode="numeric" style="width:100%"></td><td class="del-cell"><button class="btn danger sm" data-deltinc="${r.id}">✕</button></td></tr>`; });
+  h1+=`<tr class="total"><td colspan="2">Total (Bs)</td><td class="num" colspan="2">${fmtMoney(totalFixedIncomeBs())}</td><td></td></tr></tbody>`; it.innerHTML=h1;
+  const et=$('#fixedExpTable'); let h2=`<thead><tr><th>Concepto</th><th style="width:118px;">Categoría</th><th style="width:50px;">Día</th><th class="num" style="width:88px;">Monto</th><th class="del-cell"></th></tr></thead><tbody>`;
   state.templates.fixedExpenses.forEach(r=>{ const opts=EXPENSE_CATS.map(c=>`<option ${c===r.category?'selected':''}>${c}</option>`).join('');
-    h2+=`<tr><td><input data-tid="${r.id}" data-tt="exp" data-f="concept" value="${escapeAttr(r.concept)}" placeholder="Alquiler..."></td><td><select data-tid="${r.id}" data-tt="exp" data-f="category">${opts}</select></td><td class="num"><input class="num" data-tid="${r.id}" data-tt="exp" data-f="amount" value="${escapeAttr(r.amount)}" placeholder="0" inputmode="decimal"></td><td class="del-cell"><button class="btn danger sm" data-deltexp="${r.id}">✕</button></td></tr>`; });
-  h2+=`<tr class="total"><td colspan="2">Total</td><td class="num">${fmtMoney(sumAmt(state.templates.fixedExpenses))}</td><td></td></tr></tbody>`; et.innerHTML=h2;
+    h2+=`<tr><td><input data-tid="${r.id}" data-tt="exp" data-f="concept" value="${escapeAttr(r.concept)}" placeholder="Alquiler..."></td><td><select data-tid="${r.id}" data-tt="exp" data-f="category">${opts}</select></td><td><input class="num" data-tid="${r.id}" data-tt="exp" data-f="day" value="${escapeAttr(r.day||'')}" placeholder="1" inputmode="numeric" style="width:100%"></td><td class="num"><input class="num" data-tid="${r.id}" data-tt="exp" data-f="amount" value="${escapeAttr(r.amount)}" placeholder="0" inputmode="decimal"></td><td class="del-cell"><button class="btn danger sm" data-deltexp="${r.id}">✕</button></td></tr>`; });
+  h2+=`<tr class="total"><td colspan="3">Total</td><td class="num">${fmtMoney(sumAmt(state.templates.fixedExpenses))}</td><td></td></tr></tbody>`; et.innerHTML=h2;
 }
-$('#addFixedInc').addEventListener('click',()=>{ state.templates.fixedIncome.push({id:uid(),source:'',amount:''}); save(); renderTemplates(); });
-$('#addFixedExp').addEventListener('click',()=>{ state.templates.fixedExpenses.push({id:uid(),concept:'',category:'Vivienda',amount:''}); save(); renderTemplates(); });
+$('#addFixedInc').addEventListener('click',()=>{ state.templates.fixedIncome.push({id:uid(),source:'',amount:'',currency:'Bs',day:''}); save(); renderTemplates(); });
+$('#addFixedExp').addEventListener('click',()=>{ state.templates.fixedExpenses.push({id:uid(),concept:'',category:'Otros',amount:'',day:''}); save(); renderTemplates(); });
 function tmplArr(tt){ return tt==='inc'?state.templates.fixedIncome:state.templates.fixedExpenses; }
 function handleTemplateEdit(e){ const el=e.target.closest('[data-tid]'); if(!el) return; const r=tmplArr(el.dataset.tt).find(x=>x.id===el.dataset.tid); if(!r) return; r[el.dataset.f]=el.value;
-  if(el.dataset.f==='amount'){ const sel=el.dataset.tt==='inc'?'#fixedIncTable .total .num':'#fixedExpTable .total .num'; const tc=$(sel); if(tc) tc.textContent=fmtMoney(sumAmt(tmplArr(el.dataset.tt))); } save(); }
+  if(el.dataset.tt==='inc'){ const tc=$('#fixedIncTable .total .num'); if(tc) tc.textContent=fmtMoney(totalFixedIncomeBs()); }
+  else if(el.dataset.f==='amount'){ const tc=$('#fixedExpTable .total .num'); if(tc) tc.textContent=fmtMoney(sumAmt(state.templates.fixedExpenses)); }
+  save(); }
 $('#fixedIncTable').addEventListener('input', handleTemplateEdit);
 $('#fixedExpTable').addEventListener('input', handleTemplateEdit);
 $('#fixedExpTable').addEventListener('change', handleTemplateEdit);
@@ -823,6 +850,67 @@ function renderTrends(){
   box.innerHTML=html;
 }
 
+/* ===== PRESUPUESTO Y PROYECCIÓN ===== */
+function bindBudgetInputs(){
+  [['#bDailyMin','dailyMin'],['#bDailyMax','dailyMax'],['#bDays','daysPerWeek'],['#bParty','partyAmount'],['#bPartyN','partiesPerWeek']].forEach(([sel,key])=>{
+    const el=$(sel); if(!el||el._bound) return; el._bound=true;
+    el.addEventListener('input', ()=>{ state.budget[key]=el.value; save(); renderProjection(); });
+  });
+}
+function renderProjection(){
+  const box=$('#projBox'); if(!box) return; const b=state.budget||{};
+  const setv=(s,v)=>{ const el=$(s); if(el && document.activeElement!==el) el.value=v; };
+  setv('#bDailyMin',b.dailyMin); setv('#bDailyMax',b.dailyMax); setv('#bDays',b.daysPerWeek); setv('#bParty',b.partyAmount); setv('#bPartyN',b.partiesPerWeek);
+  const period=state.expenses.period||periodKey(new Date()); const [py,pm]=period.split('-').map(Number); const days=new Date(py,pm,0).getDate();
+  const avgDaily=(parseNum(b.dailyMin)+parseNum(b.dailyMax))/2;
+  const perDay = avgDaily*(parseNum(b.daysPerWeek)/7) + parseNum(b.partyAmount)*(parseNum(b.partiesPerWeek)/7);
+  const incEvents=state.expenses.income.map(r=>({day:Math.min(Math.max(parseInt(r.day)||1,1),days), amt:incomeBs(r)})).filter(e=>e.amt>0);
+  const expByDay={}; state.expenses.items.forEach(r=>{ const d=r.date?Math.min(Math.max(parseInt(r.date.split('-')[2])||1,1),days):1; expByDay[d]=(expByDay[d]||0)+parseNum(r.amount); });
+  let incomeDays=[...new Set(incEvents.map(e=>e.day))].sort((a,b)=>a-b); if(!incomeDays.length) incomeDays=[1];
+  const tramos=[]; let acc=0;
+  for(let i=0;i<incomeDays.length;i++){ const start=incomeDays[i]; const end=(i+1<incomeDays.length)?incomeDays[i+1]-1:days; const nd=end-start+1;
+    const inc=incEvents.filter(e=>e.day===start).reduce((s,e)=>s+e.amt,0); let fixed=0; for(let d=start;d<=end;d++) fixed+=(expByDay[d]||0);
+    const living=perDay*nd; const net=inc-fixed-living; acc+=net; tramos.push({start,end,nd,inc,fixed,living,net,acc}); }
+  const totalInc=incEvents.reduce((s,e)=>s+e.amt,0); const totalFixed=Object.values(expByDay).reduce((s,v)=>s+v,0);
+  const totalLiving=perDay*days; const projEnd=totalInc-totalFixed-totalLiving;
+  const firstFree = tramos.length? (tramos[0].inc-tramos[0].fixed):0;
+  let html=`<div class="stat-row" style="margin-bottom:14px;">
+    <div class="stat income"><div class="label">Ingreso del mes</div><div class="value">${fmtMoney(totalInc)}</div></div>
+    <div class="stat expense"><div class="label">Gastos fijos</div><div class="value">${fmtMoney(totalFixed)}</div></div>
+    <div class="stat"><div class="label">Gasto diario estimado</div><div class="value">${fmtMoney(totalLiving)}</div><div class="delta flat">~${fmtMoney(perDay)}/día</div></div>
+    <div class="stat balance"><div class="label">Balance proyectado</div><div class="value ${projEnd>=0?'pos':'neg'}">${fmtMoney(projEnd)}</div></div></div>`;
+  html+=`<div class="sync-status ${firstFree>=0?'ok':'warn'}">Tras tus gastos iniciales, del primer ingreso te quedan <b>${fmtMoney(firstFree)}</b> para gustos y gastos diarios hasta el siguiente ingreso.</div>`;
+  html+='<div style="overflow-x:auto"><table class="trend-tbl"><thead><tr><th>Tramo</th><th>Ingreso</th><th>Gastos fijos</th><th>Gasto diario est.</th><th>Saldo del tramo</th><th>Saldo acumulado</th></tr></thead><tbody>';
+  tramos.forEach(t=>{ html+=`<tr><td>Día ${t.start}–${t.end} <span style="color:var(--text-muted)">(${t.nd}d)</span></td><td>${fmtMoney(t.inc)}</td><td>${fmtMoney(t.fixed)}</td><td>${fmtMoney(t.living)}</td><td style="color:${t.net>=0?'var(--success)':'var(--danger)'}">${fmtMoney(t.net)}</td><td style="color:${t.acc>=0?'var(--success)':'var(--danger)'};font-weight:700">${fmtMoney(t.acc)}</td></tr>`; });
+  html+='</tbody></table></div>';
+  const minAcc=Math.min(0,...tramos.map(t=>t.acc));
+  if(minAcc<0) html+=`<div class="sync-status warn" style="margin-top:12px">⚠️ Con estos supuestos, en algún tramo tu saldo queda en rojo (${fmtMoney(minAcc)}). Lo cubres con extras (apuestas/trading/regalos) o bajando el gasto diario.</div>`;
+  else html+=`<div class="sync-status ok" style="margin-top:12px">✓ Con estos supuestos llegas a fin de mes en positivo. Lo que sobre, mándalo al ahorro.</div>`;
+  box.innerHTML=html;
+}
+function loadJulyPlan(){
+  if(!confirm('Se cargará tu plan de julio (ingresos, gastos fijos y supuestos), el mes pasará a julio 2026 y la moneda a Bs. Se reemplazan los datos del mes actual. ¿Continuar?')) return;
+  state.config.currency='Bs'; state.config.dollarRate=9.70;
+  state.budget={dailyMin:50,dailyMax:200,daysPerWeek:6,partyAmount:250,partiesPerWeek:1};
+  state.templates.fixedIncome=[
+    {id:uid(),source:'Pensión familiar',amount:'1600',currency:'Bs',day:'1'},
+    {id:uid(),source:'Trabajo',amount:'300',currency:'USD',day:'1'},
+    {id:uid(),source:'Trabajo (2da quincena)',amount:'300',currency:'USD',day:'15'}];
+  state.templates.fixedExpenses=[
+    {id:uid(),concept:'Familia',category:'Familia',amount:'1500',day:'1'},
+    {id:uid(),concept:'Gata',category:'Mascota',amount:'500',day:'1'},
+    {id:uid(),concept:'Apuestas',category:'Apuestas',amount:'200',day:'1'},
+    {id:uid(),concept:'Trading',category:'Trading',amount:'100',day:'1'},
+    {id:uid(),concept:'Videojuegos',category:'Videojuegos',amount:'300',day:'1'},
+    {id:uid(),concept:'Regalo para Ale',category:'Regalos',amount:'200',day:'8'},
+    {id:uid(),concept:'Ahorros',category:'Ahorro',amount:'500',day:'1'},
+    {id:uid(),concept:'Gimnasio',category:'Gimnasio',amount:'200',day:'1'}];
+  state.expenses.period='2026-07';
+  state.expenses.income=state.templates.fixedIncome.map(x=>({id:uid(),source:x.source,amount:x.amount,currency:x.currency,day:x.day}));
+  state.expenses.items=state.templates.fixedExpenses.map(x=>({id:uid(),date:`2026-07-${pad(parseInt(x.day)||1)}`,concept:x.concept,category:x.category,amount:x.amount}));
+  save(); applyTheme(); renderAll(); activateTab('gastos'); toast('✓ Plan de julio cargado');
+}
+
 /* ===== HISTORIAL ===== */
 function renderHistory(){ const list=$('#historyList'); const keys=Object.keys(state.expenses.history).sort().reverse();
   if(!keys.length){ list.innerHTML='<div class="empty">Aún no hay meses archivados. Se guardan automáticamente al cambiar de mes.</div>'; return; }
@@ -840,9 +928,9 @@ function openHistoryDetail(k){ const h=state.expenses.history[k]; $('#histTitle'
 
 /* ===== CONFIG / RESPALDO ===== */
 $('#themeBtn').addEventListener('click', ()=>{ state.config.theme=state.config.theme==='dark'?'light':'dark'; applyTheme(); save(); });
-$('#settingsBtn').addEventListener('click', ()=>{ $('#cfgCurrency').value=state.config.currency; $('#cfgStart').value=state.config.startHour; $('#cfgEnd').value=state.config.endHour; $('#cfgBlock').value=state.config.blockSize; renderSyncBox(); openOverlay('#settingsOverlay'); });
-$('#cfgSave').addEventListener('click', ()=>{ const cur=$('#cfgCurrency').value.trim()||'$'; let s=parseInt($('#cfgStart').value),e=parseInt($('#cfgEnd').value),b=parseInt($('#cfgBlock').value); if(isNaN(s))s=7; if(isNaN(e))e=23; if(isNaN(b))b=2; if(e<=s)e=s+b;
-  Object.assign(state.config,{currency:cur,startHour:s,endHour:e,blockSize:b}); save();
+$('#settingsBtn').addEventListener('click', ()=>{ $('#cfgCurrency').value=state.config.currency; $('#cfgDollar').value=state.config.dollarRate; $('#cfgStart').value=state.config.startHour; $('#cfgEnd').value=state.config.endHour; $('#cfgBlock').value=state.config.blockSize; renderSyncBox(); openOverlay('#settingsOverlay'); });
+$('#cfgSave').addEventListener('click', ()=>{ const cur=$('#cfgCurrency').value.trim()||'$'; let dr=parseFloat($('#cfgDollar').value); if(isNaN(dr)||dr<=0) dr=9.70; let s=parseInt($('#cfgStart').value),e=parseInt($('#cfgEnd').value),b=parseInt($('#cfgBlock').value); if(isNaN(s))s=7; if(isNaN(e))e=23; if(isNaN(b))b=2; if(e<=s)e=s+b;
+  Object.assign(state.config,{currency:cur,dollarRate:dr,startHour:s,endHour:e,blockSize:b}); save();
   renderSchedule('general','#schedGeneral'); renderSchedule('clases','#schedClases'); renderSchedule('rutina','#schedRutina'); renderExpensesAll(); renderQuickAdd();
   closeOverlay('#settingsOverlay'); toast('Configuración guardada'); });
 $('#exportBtn').addEventListener('click', ()=>{ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); const d=new Date(); a.href=url; a.download=`dashboard-respaldo-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}.json`; a.click(); URL.revokeObjectURL(url); toast('Respaldo descargado'); });
@@ -921,7 +1009,7 @@ function authAction(kind){
 }
 
 /* ===== ARRANQUE ===== */
-function bindEvents(){ bindTaskList('uni'); bindTaskList('rut'); }
+function bindEvents(){ bindTaskList('uni'); bindTaskList('rut'); bindBudgetInputs(); $('#seedJuly').addEventListener('click', loadJulyPlan); }
 init();
 window.addEventListener('load', ()=>{ setupFirebase();
   if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
