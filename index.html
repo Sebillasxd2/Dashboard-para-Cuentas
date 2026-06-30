@@ -928,7 +928,7 @@ function loadJulyPlan(){
     {id:uid(),concept:'Apuestas',category:'Apuestas',amount:'200',day:'1'},
     {id:uid(),concept:'Videojuegos',category:'Videojuegos',amount:'110',day:'1'},
     {id:uid(),concept:'Regalo para Ale',category:'Regalos',amount:'100',day:'8'},
-    {id:uid(),concept:'Ahorros',category:'Ahorro',amount:'500',day:'1'},
+    {id:uid(),concept:'Ahorros',category:'Ahorro',amount:'500',day:'15'},
     {id:uid(),concept:'Gimnasio',category:'Gimnasio',amount:'200',day:'1'},
     {id:uid(),concept:'Gasolina',category:'Transporte',amount:'150',day:'1'},
     {id:uid(),concept:'Crédito',category:'Crédito',amount:'100',day:'1'},
@@ -947,22 +947,33 @@ function discretionaryPool(){ const fixed=state.expenses.items.filter(i=>FIXED_C
 function dailySpentMap(){ const m={}; state.expenses.items.forEach(i=>{ if(FIXED_CATS.includes(i.category)) return; const d=i.date?Math.max(1,parseInt(i.date.split('-')[2])||1):1; m[d]=(m[d]||0)+parseNum(i.amount); }); return m; }
 function periodDays(period){ const [y,m]=period.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function todayInPeriod(period){ const [y,m]=period.split('-').map(Number); const n=new Date(); return (n.getFullYear()===y && n.getMonth()===m-1)? n.getDate():0; }
-function availableToday(){ const period=state.expenses.period||periodKey(new Date()); const N=periodDays(period); const pool=discretionaryPool(); const base=N>0?pool/N:0; const sp=dailySpentMap(); const td=todayInPeriod(period)||1; let prior=0; for(let d=1; d<td; d++) prior+=(sp[d]||0); return base*td-prior; }
+function computeDailyPlan(){
+  const period=state.expenses.period||periodKey(new Date()); const [py,pm]=period.split('-').map(Number); const N=new Date(py,pm,0).getDate();
+  const incByDay={}, fixedByDay={}, dailyByDay={};
+  state.expenses.income.forEach(r=>{ const d=Math.min(Math.max(parseInt(r.day)||1,1),N); incByDay[d]=(incByDay[d]||0)+incomeBs(r); });
+  state.expenses.items.forEach(i=>{ const d=i.date?Math.min(Math.max(parseInt(i.date.split('-')[2])||1,1),N):1; if(FIXED_CATS.includes(i.category)) fixedByDay[d]=(fixedByDay[d]||0)+parseNum(i.amount); else dailyByDay[d]=(dailyByDay[d]||0)+parseNum(i.amount); });
+  let incomeDays=[...new Set(Object.keys(incByDay).map(Number))].sort((a,b)=>a-b); if(!incomeDays.length) incomeDays=[1];
+  if(incomeDays[0]>1) incomeDays.unshift(1);
+  const tramos=[]; for(let i=0;i<incomeDays.length;i++){ const start=incomeDays[i]; const end=(i+1<incomeDays.length)?incomeDays[i+1]-1:N; tramos.push({start,end}); }
+  const dayAllowance={};
+  tramos.forEach(tr=>{ const tDays=tr.end-tr.start+1; let inc=0,fixed=0; for(let d=tr.start; d<=tr.end; d++){ inc+=(incByDay[d]||0); fixed+=(fixedByDay[d]||0); }
+    const budget=inc-fixed; const base=tDays>0?budget/tDays:0; tr.inc=inc; tr.fixed=fixed; tr.budget=budget; tr.base=base; tr.days=tDays;
+    let spentPrior=0; for(let d=tr.start; d<=tr.end; d++){ dayAllowance[d]=base*(d-tr.start+1)-spentPrior; spentPrior+=(dailyByDay[d]||0); } });
+  return { N, py, pm, incByDay, fixedByDay, dailyByDay, tramos, dayAllowance };
+}
+function availableToday(){ const p=computeDailyPlan(); const td=todayInPeriod(state.expenses.period||periodKey(new Date()))||1; return p.dayAllowance[td]||0; }
 function updateQaToday(){ const el=$('#qaTodayHint'); if(el) el.textContent='💸 Puedes gastar hoy: '+fmtMoney(availableToday()); }
 function renderDailyBudget(){ const box=$('#dailyBudgetBox'); if(!box) return;
-  const period=state.expenses.period||periodKey(new Date()); const [py,pm]=period.split('-').map(Number); const N=periodDays(period);
-  const pool=discretionaryPool(); const sp=dailySpentMap(); const totalSpent=Object.values(sp).reduce((s,v)=>s+v,0); const td=todayInPeriod(period); const dow=['Do','Lu','Ma','Mi','Ju','Vi','Sá'];
-  const base=N>0?pool/N:0; let spentCum=0, rows='', dispToday=base;
-  for(let d=1; d<=N; d++){ const disp=base*d-spentCum; const spent=sp[d]||0; if(d===(td||1)) dispToday=disp; spentCum+=spent; const saldo=base*d-spentCum; const isT=d===td;
-    rows+=`<tr class="${isT?'today-row':''}"><td>${dow[new Date(py,pm-1,d).getDay()]} ${d}</td><td>${fmtMoney(disp)}</td><td>${spent?fmtMoney(spent):'—'}</td><td style="color:${saldo>=0?'var(--success)':'var(--danger)'};font-weight:700">${fmtMoney(saldo)}</td></tr>`; }
-  const restante=pool-totalSpent;
-  let html=`<div class="stat-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px;">
-    <div class="stat"><div class="label">Bolsa de gustos del mes</div><div class="value">${fmtShort(pool)}</div></div>
-    <div class="stat expense"><div class="label">Gastado día a día</div><div class="value">${fmtShort(totalSpent)}</div></div>
-    <div class="stat balance"><div class="label">Te queda</div><div class="value ${restante>=0?'pos':'neg'}">${fmtShort(restante)}</div></div>
-    <div class="stat income"><div class="label">Puedes gastar hoy</div><div class="value">${fmtShort(dispToday)}</div></div></div>`;
+  const p=computeDailyPlan(); const period=state.expenses.period||periodKey(new Date()); const td=todayInPeriod(period); const dow=['Do','Lu','Ma','Mi','Ju','Vi','Sá'];
+  const pool=discretionaryPool(); const totalSpent=Object.values(p.dailyByDay).reduce((s,v)=>s+v,0); const restante=pool-totalSpent;
+  let rows='';
+  for(let d=1; d<=p.N; d++){ const disp=p.dayAllowance[d]||0; const spent=p.dailyByDay[d]||0; const inc=p.incByDay[d]||0; const isT=d===td; const saldo=disp-spent;
+    rows+=`<tr class="${isT?'today-row':''}"><td>${dow[new Date(p.py,p.pm-1,d).getDay()]} ${d}${inc?` <span style="color:var(--success);font-size:10px;font-weight:700">💰+${fmtShort(inc)}</span>`:''}</td><td>${fmtMoney(disp)}</td><td>${spent?fmtMoney(spent):'—'}</td><td style="color:${saldo>=0?'var(--success)':'var(--danger)'};font-weight:700">${fmtMoney(saldo)}</td></tr>`; }
+  let html='<div class="stat-row" style="margin-bottom:14px;">';
+  p.tramos.forEach((tr,i)=>{ html+=`<div class="stat"><div class="label">Etapa ${i+1} · día ${tr.start}–${tr.end}</div><div class="value">${fmtShort(tr.base)}<span style="font-size:12px;font-weight:600">/día</span></div></div>`; });
+  html+=`<div class="stat balance"><div class="label">Te queda en total</div><div class="value ${restante>=0?'pos':'neg'}">${fmtShort(restante)}</div></div></div>`;
   html+='<div style="overflow-x:auto;max-height:380px;overflow-y:auto"><table class="trend-tbl"><thead><tr><th>Día</th><th>Puedes gastar</th><th>Gastado</th><th>Banco</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-  html+=`<p class="hint" style="margin-top:10px">Cada día sumas tu base (~${fmtShort(base)}/día) más lo que tengas en el "banco". Si gastas menos, el banco crece y al día siguiente puedes gastar más; si te pasas, baja (puede ir en rojo). Bolsa = ingresos − fijos (tu ahorro queda protegido).</p>`;
+  html+='<p class="hint" style="margin-top:10px">Ahora respeta tu flujo de caja: cada pago abre una etapa y reparte ese dinero entre sus días (💰 marca los días de pago). Si un día gastas menos, los siguientes de esa etapa suben; si te pasas, bajan. Tu ahorro queda protegido fuera de la bolsa.</p>';
   box.innerHTML=html; }
 function refreshDaily(){ renderDailyBudget(); updateQaToday(); }
 
